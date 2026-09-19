@@ -39,14 +39,16 @@ func New(cfg *config.Config, db *gorm.DB, logger *slog.Logger) *gin.Engine {
 	productRepo := repository.NewProductRepository(db)
 	convRepo := repository.NewConversationRepository(db)
 	orderRepo := repository.NewTradeOrderRepository(db)
+	slotRepo := repository.NewTradeSlotRepository(db)
 	reviewRepo := repository.NewReviewRepository(db)
 	exchangeRepo := repository.NewBookExchangeRepository(db)
 
 	// services
 	userSvc := service.NewUserService(userRepo, cfg.JWTSecret, cfg.JWTExpireHours, logger)
-	productSvc := service.NewProductService(productRepo, logger)
+	slotSvc := service.NewTradeSlotService(slotRepo, logger)
+	productSvc := service.NewProductService(productRepo, slotRepo, slotSvc, logger)
 	convSvc := service.NewConversationService(convRepo, logger)
-	orderSvc := service.NewTradeOrderService(orderRepo, productRepo, logger)
+	orderSvc := service.NewTradeOrderService(orderRepo, productRepo, slotRepo, logger)
 	reviewSvc := service.NewReviewService(reviewRepo, orderRepo, userRepo, logger)
 	exchangeSvc := service.NewBookExchangeService(exchangeRepo, logger)
 

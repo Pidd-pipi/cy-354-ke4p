@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       MYSQL_DATABASE: ${DB_NAME:-lpcampusmarket_db}
       MYSQL_USER: ${DB_USER:-lpcampusmarket_user}
       MYSQL_PASSWORD: ${DB_PASSWORD:-lpcampusmarket_pwd}
@@ -28,6 +29,7 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-lpcampusmarket}_backend
     restart: unless-stopped
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       PORT: 8080
       DB_DSN: ${DB_USER:-lpcampusmarket_user}:${DB_PASSWORD:-lpcampusmarket_pwd}@tcp(db:3306)/${DB_NAME:-lpcampusmarket_db}?charset=utf8mb4&parseTime=True&loc=Local
       JWT_SECRET: ${JWT_SECRET:-change_me_to_a_long_random_string}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/lp/campus-market/internal/constants"
 	"github.com/lp/campus-market/internal/dto"
@@ -23,18 +24,25 @@ type ProductRepository interface {
 // ProductService manages second-hand product publishing and lifecycle.
 type ProductService struct {
 	products ProductRepository
+	slots    SlotRepository
+	slotSvc  *TradeSlotService
 	logger   *slog.Logger
 }
 
 // NewProductService wires the product service dependencies.
-func NewProductService(products ProductRepository, logger *slog.Logger) *ProductService {
-	return &ProductService{products: products, logger: logger}
+func NewProductService(products ProductRepository, slots SlotRepository, slotSvc *TradeSlotService, logger *slog.Logger) *ProductService {
+	return &ProductService{products: products, slots: slots, slotSvc: slotSvc, logger: logger}
 }
 
-// Create publishes a new product.
+// Create publishes a new product together with its optional handover slots.
 func (s *ProductService) Create(ctx context.Context, sellerID uint, req *dto.CreateProductRequest) (*model.Product, error) {
 	if !constants.IsProductCategory(req.Category) {
 		return nil, util.NewAppError(400, constants.CodeValidation, "商品分类不合法", nil)
+	}
+	now := time.Now()
+	slotModels, err := s.slotSvc.BuildSlots(req.Slots, now)
+	if err != nil {
+		return nil, err
 	}
 	p := &model.Product{
 		SellerID: sellerID, Title: req.Title, Description: req.Description,
@@ -42,11 +50,25 @@ func (s *ProductService) Create(ctx context.Context, sellerID uint, req *dto.Cre
 		Campus: req.Campus, TradeLocation: req.TradeLocation, Images: req.Images,
 		Status: constants.ProductStatusOnSale,
 	}
-	if err := s.products.Create(ctx, p); err != nil {
+	if err := s.slots.Transaction(ctx, func(txCtx context.Context) error {
+		if err := s.products.Create(txCtx, p); err != nil {
+			return fmt.Errorf("product[seller=%d] publish: %w", sellerID, err)
+		}
+		for i := range slotModels {
+			slotModels[i].ProductID = p.ID
+		}
+		if err := s.slotSvc.CreateBatch(txCtx, slotModels); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		s.logger.Error(fmt.Sprintf(constants.LogProductPublishFailed, sellerID, req.Title, err))
-		return nil, util.WrapAppError(fmt.Errorf("product[seller=%d] publish: %w", sellerID, err), 500, constants.CodeInternalError, constants.MsgInternalError)
+		return nil, util.WrapAppError(err, 500, constants.CodeInternalError, constants.MsgInternalError)
 	}
 	s.logger.Info(fmt.Sprintf(constants.LogProductPublishSuccess, p.ID, p.Title))
+	if len(slotModels) > 0 {
+		s.logger.Info(fmt.Sprintf(constants.LogTradeSlotPublishSuccess, p.ID, len(slotModels)))
+	}
 	return p, nil
 }
 
@@ -57,6 +79,24 @@ func (s *ProductService) Get(ctx context.Context, id uint) (*model.Product, erro
 		return nil, util.WrapAppError(fmt.Errorf("product[id=%d] get: %w", id, err), 404, constants.CodeNotFound, constants.MsgNotFound)
 	}
 	return p, nil
+}
+
+// GetDetail returns a product augmented with its handover slot availability.
+func (s *ProductService) GetDetail(ctx context.Context, id uint) (*dto.ProductDetailView, error) {
+	p, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	view := &dto.ProductDetailView{Product: *p, Slots: []dto.SlotView{}}
+	slotViews, available, err := s.slotSvc.DetailView(ctx, id, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	view.Slots = slotViews
+	view.AvailableSlots = available
+	view.TotalSlots = len(slotViews)
+	view.HasSlots = len(slotViews) > 0
+	return view, nil
 }
 
 // List filters products.

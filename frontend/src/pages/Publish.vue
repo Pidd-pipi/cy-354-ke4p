@@ -32,10 +32,24 @@ async function submit() {
     ElMessage.warning('请填写完整信息')
     return
   }
+  if (form.slots.some((s) => new Date(s.start_time).getTime() <= Date.now())) {
+    ElMessage.warning('面交时段必须是未来时间')
+    return
+  }
   submitting.value = true
   try {
-    await createProduct({ ...form })
-    ElMessage.success('发布成功')
+    await createProduct({
+      title: form.title,
+      description: form.description,
+      price: form.price,
+      category: form.category,
+      condition: form.condition,
+      campus: form.campus,
+      trade_location: form.trade_location,
+      images: form.images,
+      slots: form.slots,
+    })
+    ElMessage.success(form.slots.length ? `发布成功，已开放 ${form.slots.length} 个面交时段` : '发布成功')
     router.push('/products')
   } finally {
     submitting.value = false

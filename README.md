@@ -1,6 +1,20 @@
 # CampusMarket（校园二手交易平台）
 
-一款面向高校学生的校内 C2C 交易平台，覆盖闲置物品发布、价格协商私信、交易达成确认、信誉评分举报、毕业季专场与书籍交换等场景。
+一款面向高校学生的校内 C2C 交易平台，覆盖闲置物品发布、价格协商私信、交易达成确认、信誉评分举报、毕业季专场与书籍交换等场景，并支持**商品面交时段预约闭环**：卖家发布商品时可设置若干半小时面交时段，买家下单必须选择未过期且未被占用的时段，待确认期取消自动释放，完成交易后永久锁定。
+
+## 面交时段预约闭环
+
+| 环节 | 行为 |
+| --- | --- |
+| 卖家发布 | 发布商品时可选挂载若干个整点/半点开始、时长 30 分钟的未来时段（`slots`，可不传） |
+| 买家下单 | 商品有时段时必须传 `slot_id`，且该时段须未过期、未被占用；无时段商品维持原有直接下单流程 |
+| 并发抢约 | 下单在单个数据库事务内完成「建单 + 时段条件更新」，`WHERE status IN ('available','released') AND start_time > NOW()` 的原子 UPDATE 配合 `(product_id,start_time)`、`order_id` 唯一索引，保证同一时段并发抢购仅一人成功，失败者事务回滚、不留下重复订单 |
+| 取消释放 | 仅 `pending`（待确认）阶段买/卖任一方可取消，订单置为 `cancelled` 且时段回到 `released`（可被再次预约） |
+| 完成锁定 | 买家确认 → 卖家确认收款后订单 `completed`、商品售出，时段保持 `locked` 永久锁定，不再释放 |
+| 详情展示 | 商品详情返回全部时段及 `available_slots` 剩余可选数；「我的交易」展示订单预约时间，刷新后状态一致 |
+
+时段状态 `SlotStatus`：`available`（可预约）/ `locked`（已被订单占用）/ `released`（待确认订单取消后释放、可再约）。
+
 
 ## 快速启动（Docker Compose 一键部署）
 
@@ -78,14 +92,14 @@ cy-354/
 │   ├── cmd/server/          # main.go + seed.go
 │   └── internal/
 │       ├── config/          # 环境变量配置
-│       ├── constants/       # product.go, trade.go, user.go, error_codes.go, log_templates.go, messages.go
-│       ├── model/           # user, product, conversation, message, trade_order, review, book_exchange
-│       ├── repository/      # GORM 仓库（按实体分文件）
-│       ├── service/         # 业务逻辑（按实体分文件）
+│       ├── constants/       # product.go, trade.go, trade_slot.go, user.go, error_codes.go, log_templates.go, messages.go
+│       ├── model/           # user, product, conversation, message, trade_order, trade_slot, review, book_exchange
+│       ├── repository/      # GORM 仓库（按实体分文件，含 trade_slot_repository）
+│       ├── service/         # 业务逻辑（按实体分文件，含 trade_slot_service）
 │       ├── handler/         # HTTP 处理器（按实体分文件）
 │       ├── router/          # router.go + 按实体路由文件
 │       ├── middleware/      # auth, rbac, rate_limiter, error_handler, request_id
-│       ├── dto/             # 请求/响应结构体
+│       ├── dto/             # 请求/响应结构体（含 trade_slot 时段与商品详情视图）
 │       └── util/            # jwt, logger, formatters, app_error, credit_calculator, response
 └── frontend/
     ├── Dockerfile
@@ -93,13 +107,13 @@ cy-354/
     └── src/
         ├── api/             # user, product, conversation, tradeOrder, review, bookExchange
         ├── stores/          # authStore, userStore, productStore, tradeStore
-        ├── components/common/# ProductCard, ProductForm, MessageBubble, TradeStatusBadge, ExchangeCard
+        ├── components/common/# ProductCard, ProductForm, ProductSlots, ProductDetailDialog, MessageBubble, TradeStatusBadge, ExchangeCard
         ├── hooks/           # useAuth, useProducts, useConversations
         ├── pages/           # Products, Publish, Messages, Orders, BookExchange, Graduation, Profile, Login, Register
         ├── router/          # index.ts + guards.ts
-        ├── utils/           # request, dateFormat, priceFormatter
-        ├── constants/       # product, trade, user, errorCodes
-        └── types/           # 共享类型
+        ├── utils/           # request, dateFormat（含时段区间 formatSlotRange）, priceFormatter
+        ├── constants/       # product, trade, slot, user, errorCodes
+        └── types/           # 共享类型（含 TradeSlot / ProductDetail / 订单 slot 字段）
 ```
 
 ## 环境变量
@@ -157,14 +171,14 @@ cy-354/
 | PUT | `/api/v1/users/me` | 更新昵称/头像/校区 | 登录 |
 | GET | `/api/v1/products` | 商品分页列表 | 无 |
 | GET | `/api/v1/products/graduation` | 毕业季专场列表 | 无 |
-| GET | `/api/v1/products/:id` | 商品详情 | 无 |
-| POST | `/api/v1/products` | 发布商品 | 登录 |
+| GET | `/api/v1/products/:id` | 商品详情（含面交时段与剩余可选数） | 无 |
+| POST | `/api/v1/products` | 发布商品（可携带 `slots` 半小时面交时段） | 登录 |
 | DELETE | `/api/v1/products/:id` | 下架自己的商品 | 登录 |
 | POST | `/api/v1/conversations` | 发起/复用私信会话 | 登录 |
 | GET | `/api/v1/conversations/me` | 我的会话列表 | 登录 |
 | GET | `/api/v1/conversations/:id/messages` | 会话消息记录 | 登录 |
 | POST | `/api/v1/conversations/:id/messages` | 发送私信 | 登录 |
-| POST | `/api/v1/trade-orders` | 创建购买订单 | 登录 |
+| POST | `/api/v1/trade-orders` | 创建购买订单（有时段的商品必传 `slot_id`） | 登录 |
 | GET | `/api/v1/trade-orders/me` | 我的订单列表 | 登录 |
 | POST | `/api/v1/trade-orders/:id/buyer-confirm` | 买家确认 | 登录 |
 | POST | `/api/v1/trade-orders/:id/seller-confirm` | 卖家确认（订单完成+商品售出） | 登录 |
@@ -217,6 +231,29 @@ cy-354/
 - `backend/internal/util/formatters.go` `TradeStatusText()`
 - `backend/internal/constants/log_templates.go` 交易日志模板
 - `backend/internal/constants/error_codes.go` 状态冲突错误码
+
+### SlotStatus（available/locked/released，面交时段）
+
+前端 `frontend/src/constants/slot.ts`：
+
+- `SLOT_STATUSES` 常量定义
+- `slotStatusLabel()` / `slotStatusType()` 映射
+- `src/components/common/ProductSlots.vue` 可选时段单选与剩余数
+- `src/components/common/ProductDetailDialog.vue` 商品详情时段展示
+- `src/pages/Orders.vue` 订单预约时间与时段状态
+- `src/types/index.ts` `TradeSlot.status` 字段
+
+后端 `backend/internal/constants/trade_slot.go`：
+
+- `SlotStatusAvailable/Locked/Released` 常量
+- `SlotStatuses` 列表、`IsSlotStatus()`
+- `SlotStatusText()` 文案、`SlotDuration`（30 分钟）、`MaxSlotsPerProduct`
+- `backend/internal/model/trade_slot.go` Status 字段
+- `backend/internal/repository/trade_slot_repository.go` 原子占用 `TryOccupy()` / 释放 `Release()`
+- `backend/internal/service/trade_slot_service.go` 时段校验与可用性视图
+- `backend/internal/service/trade_order_service.go` 下单锁定/取消释放/完成永久锁定状态机
+- `backend/internal/constants/messages.go` 时段相关错误文案
+- `backend/internal/constants/log_templates.go` 时段日志模板
 
 ### UserRole（student/admin）
 

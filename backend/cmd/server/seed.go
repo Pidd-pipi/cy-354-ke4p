@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/lp/campus-market/internal/constants"
 	"github.com/lp/campus-market/internal/model"
@@ -61,6 +62,10 @@ func seed(ctx context.Context, db *gorm.DB, logger *slog.Logger) error {
 	if err := db.WithContext(ctx).Create(&products).Error; err != nil {
 		return fmt.Errorf("seed products: %w", err)
 	}
+	slots := seedSlots(products[:2])
+	if err := db.WithContext(ctx).Create(&slots).Error; err != nil {
+		return fmt.Errorf("seed trade slots: %w", err)
+	}
 	exchanges := []model.BookExchange{
 		{UserID: users[0].ID, OfferBook: "数据结构", WantBook: "计算机网络", Description: "希望交换", Status: "open"},
 		{UserID: users[1].ID, OfferBook: "计算机网络", WantBook: "数据结构", Description: "同城交换", Status: "open"},
@@ -70,4 +75,36 @@ func seed(ctx context.Context, db *gorm.DB, logger *slog.Logger) error {
 	}
 	logger.Info(fmt.Sprintf(constants.LogSeedingCompleted, len(users), len(products)))
 	return nil
+}
+
+// seedSlots builds future half-hour-aligned handover windows for the given
+// products (the first product gets three windows, the rest two each).
+func seedSlots(products []model.Product) []model.TradeSlot {
+	ceilHalfHour := func(t time.Time) time.Time {
+		min := t.Minute()
+		add := (30 - min%30) % 30
+		if add == 0 {
+			add = 30
+		}
+		t = t.Add(time.Duration(add) * time.Minute)
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, t.Location())
+	}
+	bases := []struct {
+		productIdx int
+		offset     time.Duration
+	}{
+		{0, 24 * time.Hour}, {0, 48 * time.Hour}, {0, 72 * time.Hour},
+		{1, 24 * time.Hour}, {1, 48 * time.Hour},
+	}
+	slots := make([]model.TradeSlot, 0, len(bases))
+	for _, b := range bases {
+		start := ceilHalfHour(time.Now().Add(b.offset))
+		slots = append(slots, model.TradeSlot{
+			ProductID: products[b.productIdx].ID,
+			StartTime: start,
+			EndTime:   start.Add(constants.SlotDuration),
+			Status:    constants.SlotStatusAvailable,
+		})
+	}
+	return slots
 }

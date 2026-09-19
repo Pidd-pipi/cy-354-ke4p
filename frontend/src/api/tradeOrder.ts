@@ -1,8 +1,11 @@
 import request from '../utils/request'
 import type { PageResult, TradeOrder } from '../types'
 
-export function createTradeOrder(product_id: number) {
-  return request.post<never, { code: number; message: string; data: TradeOrder }>('/trade-orders', { product_id })
+export function createTradeOrder(product_id: number, slot_id?: number | null) {
+  return request.post<never, { code: number; message: string; data: TradeOrder }>(
+    '/trade-orders',
+    slot_id ? { product_id, slot_id } : { product_id },
+  )
 }
 
 export function listMyOrders(params: { page?: number; page_size?: number }) {

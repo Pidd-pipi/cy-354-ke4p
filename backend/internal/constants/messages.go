@@ -20,4 +20,12 @@ const (
 	MsgExchangeClosed      = "该交换已关闭"
 	MsgNoMatch             = "暂未找到匹配的书籍交换"
 	MsgReportTarget        = "举报对象无效"
+	MsgSlotRequired        = "请选择面交时段"
+	MsgSlotNotFound        = "面交时段不存在"
+	MsgSlotExpired         = "该面交时段已过期"
+	MsgSlotTaken           = "该面交时段已被抢先预约，请选择其他时段"
+	MsgSlotProductMismatch = "面交时段与商品不匹配"
+	MsgSlotInvalidTime     = "面交时段必须是未开始的整点或半点，时长为30分钟"
+	MsgSlotTooMany         = "面交时段数量超过上限"
+	MsgSlotDuplicate       = "面交时段不能重复"
 )

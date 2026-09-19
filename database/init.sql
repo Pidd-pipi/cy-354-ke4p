@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS trade_orders (
   product_id BIGINT UNSIGNED NOT NULL,
   buyer_id BIGINT UNSIGNED NOT NULL,
   seller_id BIGINT UNSIGNED NOT NULL,
+  slot_id BIGINT UNSIGNED NULL,
   status VARCHAR(16) NOT NULL DEFAULT 'pending',
   buyer_confirmed_at DATETIME(3) NULL,
   seller_confirmed_at DATETIME(3) NULL,
@@ -66,7 +67,23 @@ CREATE TABLE IF NOT EXISTS trade_orders (
   INDEX idx_trade_orders_product (product_id),
   INDEX idx_trade_orders_buyer (buyer_id),
   INDEX idx_trade_orders_seller (seller_id),
+  INDEX idx_trade_orders_slot (slot_id),
   INDEX idx_trade_orders_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 面交时段：卖家发布商品时设置的半小时可选时段
+CREATE TABLE IF NOT EXISTS trade_slots (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id BIGINT UNSIGNED NOT NULL,
+  start_time DATETIME(3) NOT NULL,
+  end_time DATETIME(3) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'available',
+  order_id BIGINT UNSIGNED NULL,
+  created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_trade_slots_product_start (product_id, start_time),
+  UNIQUE KEY uk_trade_slots_order (order_id),
+  INDEX idx_trade_slots_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -107,6 +124,22 @@ INSERT INTO products (seller_id, title, description, price, category, `condition
 (2, 'iPad Air 5', '95新，带笔', 2800.00, 'electronics', '95新', '西校区', '三食堂', '', 'on_sale'),
 (3, '宿舍小台灯', '暖光护眼', 20.00, 'daily', '全新', '南校区', '南门快递点', '', 'on_sale'),
 (1, '毕业季正装一套', 'M码 黑色西服', 180.00, 'clothing', '九成新', '东校区', '东门', '', 'on_sale');
+
+-- 面交时段种子数据：前两个商品各开放未来的半小时时段；其余商品保持“随时面交”流程。
+-- start_time 向上取整到下一个整点/半点（CEIL(epoch/1800)*1800），end_time 为其后 30 分钟。
+INSERT INTO trade_slots (product_id, start_time, end_time, status)
+SELECT p.id,
+       FROM_UNIXTIME(CEIL(UNIX_TIMESTAMP(t.base) / 1800) * 1800) AS start_time,
+       FROM_UNIXTIME(CEIL(UNIX_TIMESTAMP(t.base) / 1800) * 1800 + 1800) AS end_time,
+       'available'
+FROM (
+  SELECT 1 AS id, DATE_ADD(NOW(), INTERVAL 1 DAY) AS base
+  UNION ALL SELECT 1, DATE_ADD(DATE_ADD(NOW(), INTERVAL 1 DAY), INTERVAL 1 HOUR)
+  UNION ALL SELECT 1, DATE_ADD(NOW(), INTERVAL 2 DAY)
+  UNION ALL SELECT 2, DATE_ADD(NOW(), INTERVAL 1 DAY)
+  UNION ALL SELECT 2, DATE_ADD(NOW(), INTERVAL 2 DAY)
+) t
+JOIN products p ON p.id = t.id;
 
 INSERT INTO book_exchanges (user_id, offer_book, want_book, description, status) VALUES
 (1, '数据结构', '计算机网络', '希望交换', 'open'),

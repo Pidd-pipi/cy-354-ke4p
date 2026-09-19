@@ -7,13 +7,19 @@
           <TradeStatusBadge :status="o.status" />
           <span class="order-id">订单 #{{ o.id }} · 商品 #{{ o.product_id }}</span>
           <p class="order-meta">
-            买家 #{{ o.buyer_id }} / 卖家 #{{ o.seller_id }} · {{ formatDateTime(o.created_at) }}
+            买家 #{{ o.buyer_id }} / 卖家 #{{ o.seller_id }} · 下单 {{ formatDateTime(o.created_at) }}
+          </p>
+          <p v-if="o.slot" class="order-slot">
+            <el-tag size="small" :type="o.status === 'cancelled' ? 'info' : 'warning'">
+              面交时间 {{ formatSlotRange(o.slot.start_time, o.slot.end_time) }}
+            </el-tag>
+            <span class="slot-state">{{ slotStatusLabel(o.slot.status) }}{{ o.slot.expired ? '（已过期）' : '' }}</span>
           </p>
         </div>
         <div class="order-actions">
-          <el-button v-if="o.status === 'pending' && o.buyer_id === authStore.user?.id" size="small" type="primary" @click="buyerConfirm(o.id)">确认收货</el-button>
-          <el-button v-if="o.status === 'confirmed' && o.seller_id === authStore.user?.id" size="small" type="success" @click="sellerConfirm(o.id)">确认收款</el-button>
-          <el-button v-if="o.status === 'pending'" size="small" type="danger" @click="cancel(o.id)">取消</el-button>
+          <el-button v-if="o.status === 'pending' && o.buyer_id === authStore.user?.id" size="small" type="primary" @click="onBuyerConfirm(o.id)">确认收货</el-button>
+          <el-button v-if="o.status === 'confirmed' && o.seller_id === authStore.user?.id" size="small" type="success" @click="onSellerConfirm(o.id)">确认收款</el-button>
+          <el-button v-if="o.status === 'pending'" size="small" type="danger" @click="onCancel(o.id)">取消</el-button>
           <el-button v-if="o.status === 'completed'" size="small" @click="reviewDialog(o)">评价</el-button>
         </div>
       </div>
@@ -40,14 +46,15 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import TradeStatusBadge from '../components/common/TradeStatusBadge.vue'
 import { useTradeStore } from '../stores/tradeStore'
 import { useAuthStore } from '../stores/authStore'
 import { buyerConfirm, sellerConfirm, cancelTradeOrder } from '../api/tradeOrder'
 import { createReview } from '../api/review'
 import { REVIEW_RATINGS } from '../constants/trade'
-import { formatDateTime } from '../utils/dateFormat'
+import { slotStatusLabel } from '../constants/slot'
+import { formatDateTime, formatSlotRange } from '../utils/dateFormat'
 import type { TradeOrder } from '../types'
 
 const { orders, fetch } = useTradeStore()
@@ -55,21 +62,30 @@ const authStore = useAuthStore()
 const reviewVisible = ref(false)
 const reviewForm = reactive({ trade_id: 0, rating: 'good', content: '' })
 
-async function buyerConfirmFn(id: number) {
+async function onBuyerConfirm(id: number) {
   await buyerConfirm(id)
-  ElMessage.success('已确认收货')
+  ElMessage.success('已确认收货，等待卖家确认收款')
   await fetch()
 }
 
-async function sellerConfirmFn(id: number) {
+async function onSellerConfirm(id: number) {
   await sellerConfirm(id)
-  ElMessage.success('交易完成')
+  ElMessage.success('交易完成，面交时段已锁定')
   await fetch()
 }
 
-async function cancelFn(id: number) {
+async function onCancel(id: number) {
+  try {
+    await ElMessageBox.confirm('取消后该面交时段将被释放，其他买家可重新预约。确认取消该订单？', '取消订单', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '再想想',
+    })
+  } catch {
+    return
+  }
   await cancelTradeOrder(id)
-  ElMessage.success('已取消')
+  ElMessage.success('已取消，面交时段已释放')
   await fetch()
 }
 
@@ -107,5 +123,15 @@ onMounted(fetch)
   color: #909399;
   font-size: 12px;
   margin: 6px 0 0;
+}
+.order-slot {
+  margin: 8px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.slot-state {
+  font-size: 12px;
+  color: #909399;
 }
 </style>

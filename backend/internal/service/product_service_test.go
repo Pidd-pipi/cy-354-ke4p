@@ -4,67 +4,22 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/lp/campus-market/internal/constants"
 	"github.com/lp/campus-market/internal/dto"
-	"github.com/lp/campus-market/internal/model"
-	"github.com/lp/campus-market/internal/util"
 )
 
-type fakeProductRepo struct {
-	products map[uint]*model.Product
-	nextID   uint
+func newTestProductService(db *fakeDB) (*ProductService, *fakeProductRepo, *fakeSlotRepo) {
+	products := newFakeProductRepo(db)
+	slots := newFakeSlotRepo(db)
+	slotSvc := NewTradeSlotService(slots, slog.Default())
+	svc := NewProductService(products, slots, slotSvc, slog.Default())
+	return svc, products, slots
 }
-
-func newFakeProductRepo() *fakeProductRepo {
-	return &fakeProductRepo{products: map[uint]*model.Product{}, nextID: 1}
-}
-
-func (f *fakeProductRepo) Create(_ context.Context, p *model.Product) error {
-	p.ID = f.nextID
-	f.nextID++
-	f.products[p.ID] = p
-	return nil
-}
-
-func (f *fakeProductRepo) FindByID(_ context.Context, id uint) (*model.Product, error) {
-	if p, ok := f.products[id]; ok {
-		cp := *p
-		return &cp, nil
-	}
-	return nil, util.ErrNotFound
-}
-
-func (f *fakeProductRepo) List(_ context.Context, category, campus, keyword, status string, page, pageSize int) ([]model.Product, int64, error) {
-	var out []model.Product
-	for _, p := range f.products {
-		if category != "" && p.Category != category {
-			continue
-		}
-		if campus != "" && p.Campus != campus {
-			continue
-		}
-		if status != "" && p.Status != status {
-			continue
-		}
-		out = append(out, *p)
-	}
-	return out, int64(len(out)), nil
-}
-
-func (f *fakeProductRepo) UpdateStatus(_ context.Context, id uint, status string) error {
-	_, err := f.FindByID(context.Background(), id)
-	if err != nil {
-		return err
-	}
-	f.products[id].Status = status
-	return nil
-}
-
-func (f *fakeProductRepo) Count(context.Context) (int64, error) { return int64(len(f.products)), nil }
 
 func TestProductServiceCreate(t *testing.T) {
-	svc := NewProductService(newFakeProductRepo(), slog.Default())
+	svc, _, _ := newTestProductService(newFakeDB())
 	tests := []struct {
 		name     string
 		category string
@@ -89,8 +44,8 @@ func TestProductServiceCreate(t *testing.T) {
 }
 
 func TestProductServiceRemoveOwnership(t *testing.T) {
-	repo := newFakeProductRepo()
-	svc := NewProductService(repo, slog.Default())
+	db := newFakeDB()
+	svc, _, _ := newTestProductService(db)
 	created, _ := svc.Create(context.Background(), 1, &dto.CreateProductRequest{Title: "我的书", Price: 10, Category: constants.ProductCategoryBooks, Condition: "全新", Campus: "东校区", TradeLocation: "东门"})
 	if _, err := svc.Remove(context.Background(), 99, created.ID); err == nil {
 		t.Fatalf("expected forbidden error for non-owner")
@@ -102,4 +57,54 @@ func TestProductServiceRemoveOwnership(t *testing.T) {
 	if removed.Status != constants.ProductStatusRemoved {
 		t.Fatalf("expected removed status")
 	}
+}
+
+func TestProductServiceCreateWithSlots(t *testing.T) {
+	db := newFakeDB()
+	svc, _, slotRepo := newTestProductService(db)
+	future := time.Now().Add(3 * time.Hour).Truncate(time.Hour)
+	req := &dto.CreateProductRequest{
+		Title: "带时段的商品", Price: 10, Category: constants.ProductCategoryBooks,
+		Condition: "全新", Campus: "东校区", TradeLocation: "东门",
+		Slots: []dto.CreateSlotInput{{StartTime: future}, {StartTime: future.Add(30 * time.Minute)}},
+	}
+	p, err := svc.Create(context.Background(), 1, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	slots, _ := slotRepo.ListByProduct(context.Background(), p.ID)
+	if len(slots) != 2 {
+		t.Fatalf("expected 2 slots, got %d", len(slots))
+	}
+	if slots[0].EndTime.Sub(slots[0].StartTime) != constants.SlotDuration {
+		t.Fatalf("slot must last 30 minutes")
+	}
+}
+
+func TestProductServiceCreateRejectsBadSlots(t *testing.T) {
+	svc, _, _ := newTestProductService(newFakeDB())
+	base := &dto.CreateProductRequest{Title: "坏时段", Price: 10, Category: constants.ProductCategoryBooks, Condition: "全新", Campus: "东校区", TradeLocation: "东门"}
+
+	t.Run("expired slot", func(t *testing.T) {
+		req := *base
+		req.Slots = []dto.CreateSlotInput{{StartTime: time.Now().Add(-time.Hour)}}
+		if _, err := svc.Create(context.Background(), 1, &req); err == nil {
+			t.Fatalf("expected error for past slot")
+		}
+	})
+	t.Run("off-grid slot", func(t *testing.T) {
+		req := *base
+		req.Slots = []dto.CreateSlotInput{{StartTime: time.Now().Add(3 * time.Hour).Truncate(time.Hour).Add(17 * time.Minute)}}
+		if _, err := svc.Create(context.Background(), 1, &req); err == nil {
+			t.Fatalf("expected error for non half-hour slot")
+		}
+	})
+	t.Run("duplicate slot", func(t *testing.T) {
+		req := *base
+		at := time.Now().Add(3 * time.Hour).Truncate(time.Hour)
+		req.Slots = []dto.CreateSlotInput{{StartTime: at}, {StartTime: at}}
+		if _, err := svc.Create(context.Background(), 1, &req); err == nil {
+			t.Fatalf("expected error for duplicate slot")
+		}
+	})
 }

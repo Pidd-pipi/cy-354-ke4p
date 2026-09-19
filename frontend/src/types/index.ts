@@ -28,6 +28,24 @@ export interface Product {
   created_at: string
 }
 
+export type SlotStatus = 'available' | 'locked' | 'released'
+
+export interface TradeSlot {
+  id: number
+  start_time: string
+  end_time: string
+  status: SlotStatus
+  available: boolean
+  expired: boolean
+}
+
+export interface ProductDetail extends Product {
+  slots: TradeSlot[]
+  available_slots: number
+  total_slots: number
+  has_slots: boolean
+}
+
 export interface Conversation {
   id: number
   product_id: number
@@ -50,6 +68,8 @@ export interface TradeOrder {
   product_id: number
   buyer_id: number
   seller_id: number
+  slot_id: number | null
+  slot?: TradeSlot | null
   status: string
   buyer_confirmed_at: string | null
   seller_confirmed_at: string | null
