@@ -36,7 +36,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		util.Fail(c, http.StatusBadRequest, constants.CodeValidation, constants.MsgValidationFailed)
 		return
 	}
-	p, err := h.svc.Create(c.Request.Context(), userID, &req)
+	p, _, err := h.svc.Create(c.Request.Context(), userID, &req)
 	if err != nil {
 		c.Error(err)
 		return
@@ -51,12 +51,12 @@ func (h *ProductHandler) Get(c *gin.Context) {
 		util.Fail(c, http.StatusBadRequest, constants.CodeBadRequest, "商品ID不合法")
 		return
 	}
-	p, err := h.svc.Get(c.Request.Context(), uint(id))
+	detail, err := h.svc.GetDetail(c.Request.Context(), uint(id))
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	util.OK(c, p)
+	util.OK(c, detail)
 }
 
 // List handles GET /products.

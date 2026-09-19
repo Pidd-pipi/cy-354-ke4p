@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS products (
   INDEX idx_products_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 商品可选半小时面交时段（卖家发布时设置；一个时段最多被一个有效订单占用）
+CREATE TABLE IF NOT EXISTS product_slots (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  product_id BIGINT UNSIGNED NOT NULL,
+  start_at DATETIME(3) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'open',
+  order_id BIGINT UNSIGNED NULL,
+  created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uniq_product_slot_start (product_id, start_at),
+  INDEX idx_product_slots_status (status),
+  INDEX idx_product_slots_order (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS conversations (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   product_id BIGINT UNSIGNED NOT NULL,
@@ -59,6 +72,7 @@ CREATE TABLE IF NOT EXISTS trade_orders (
   buyer_id BIGINT UNSIGNED NOT NULL,
   seller_id BIGINT UNSIGNED NOT NULL,
   status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  slot_start_at DATETIME(3) NULL,
   buyer_confirmed_at DATETIME(3) NULL,
   seller_confirmed_at DATETIME(3) NULL,
   completed_at DATETIME(3) NULL,
@@ -66,7 +80,8 @@ CREATE TABLE IF NOT EXISTS trade_orders (
   INDEX idx_trade_orders_product (product_id),
   INDEX idx_trade_orders_buyer (buyer_id),
   INDEX idx_trade_orders_seller (seller_id),
-  INDEX idx_trade_orders_status (status)
+  INDEX idx_trade_orders_status (status),
+  INDEX idx_trade_orders_slot_start (slot_start_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -107,6 +122,14 @@ INSERT INTO products (seller_id, title, description, price, category, `condition
 (2, 'iPad Air 5', '95新，带笔', 2800.00, 'electronics', '95新', '西校区', '三食堂', '', 'on_sale'),
 (3, '宿舍小台灯', '暖光护眼', 20.00, 'daily', '全新', '南校区', '南门快递点', '', 'on_sale'),
 (1, '毕业季正装一套', 'M码 黑色西服', 180.00, 'clothing', '九成新', '东校区', '东门', '', 'on_sale');
+
+-- 面交时段（相对首次启动时间生成，保证播种后未过期）：明天 10:00/10:30 等整半小时时段
+INSERT INTO product_slots (product_id, start_at, status) VALUES
+(1, DATE_ADD(DATE_ADD(CURDATE(), INTERVAL 1 DAY), INTERVAL 10 HOUR), 'open'),
+(1, DATE_ADD(DATE_ADD(DATE_ADD(CURDATE(), INTERVAL 1 DAY), INTERVAL 10 HOUR), INTERVAL 30 MINUTE), 'open'),
+(2, DATE_ADD(DATE_ADD(CURDATE(), INTERVAL 1 DAY), INTERVAL 14 HOUR), 'open'),
+(2, DATE_ADD(DATE_ADD(CURDATE(), INTERVAL 2 DAY), INTERVAL 11 HOUR), 'open'),
+(2, DATE_ADD(DATE_ADD(DATE_ADD(CURDATE(), INTERVAL 2 DAY), INTERVAL 14 HOUR), INTERVAL 30 MINUTE), 'open');
 
 INSERT INTO book_exchanges (user_id, offer_book, want_book, description, status) VALUES
 (1, '数据结构', '计算机网络', '希望交换', 'open'),

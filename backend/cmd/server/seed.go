@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/lp/campus-market/internal/constants"
 	"github.com/lp/campus-market/internal/model"
@@ -60,6 +61,22 @@ func seed(ctx context.Context, db *gorm.DB, logger *slog.Logger) error {
 	}
 	if err := db.WithContext(ctx).Create(&products).Error; err != nil {
 		return fmt.Errorf("seed products: %w", err)
+	}
+	// Offer half-hour meetup slots relative to boot time so they stay bookable.
+	tomorrow := time.Now().AddDate(0, 0, 1)
+	dayAfter := time.Now().AddDate(0, 0, 2)
+	at := func(day time.Time, hour, minute int) time.Time {
+		return time.Date(day.Year(), day.Month(), day.Day(), hour, minute, 0, 0, day.Location())
+	}
+	slots := []model.ProductSlot{
+		{ProductID: products[0].ID, StartAt: at(tomorrow, 10, 0), Status: constants.ProductSlotStatusOpen},
+		{ProductID: products[0].ID, StartAt: at(tomorrow, 10, 30), Status: constants.ProductSlotStatusOpen},
+		{ProductID: products[1].ID, StartAt: at(tomorrow, 14, 0), Status: constants.ProductSlotStatusOpen},
+		{ProductID: products[1].ID, StartAt: at(dayAfter, 11, 0), Status: constants.ProductSlotStatusOpen},
+		{ProductID: products[1].ID, StartAt: at(dayAfter, 14, 30), Status: constants.ProductSlotStatusOpen},
+	}
+	if err := db.WithContext(ctx).Create(&slots).Error; err != nil {
+		return fmt.Errorf("seed product slots: %w", err)
 	}
 	exchanges := []model.BookExchange{
 		{UserID: users[0].ID, OfferBook: "数据结构", WantBook: "计算机网络", Description: "希望交换", Status: "open"},

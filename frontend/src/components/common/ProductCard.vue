@@ -11,9 +11,15 @@
       <span>{{ product.campus }}</span>
       <span>{{ product.condition }}</span>
     </div>
+    <div v-if="product.has_slots" class="product-slots">
+      <el-tag size="small" :type="product.open_slot_count && product.open_slot_count > 0 ? 'success' : 'info'">
+        <template v-if="product.open_slot_count && product.open_slot_count > 0">支持面交预约 · 剩 {{ product.open_slot_count }} 个时段</template>
+        <template v-else>面交时段约满</template>
+      </el-tag>
+    </div>
     <div class="product-actions">
       <el-button size="small" @click="$emit('detail', product)">详情</el-button>
-      <el-button v-if="!hideBuy" size="small" type="primary" :disabled="product.status !== 'on_sale'" @click="$emit('buy', product)">购买</el-button>
+      <el-button v-if="!hideBuy" size="small" type="primary" :disabled="product.status !== 'on_sale' || (!!product.has_slots && !product.open_slot_count)" @click="$emit('buy', product)">购买</el-button>
       <el-button v-if="showChat" size="small" @click="$emit('chat', product)">私信</el-button>
     </div>
   </el-card>
@@ -60,5 +66,8 @@ defineEmits<{ (e: 'detail', p: Product): void; (e: 'buy', p: Product): void; (e:
   font-size: 12px;
   color: #606266;
   margin: 8px 0;
+}
+.product-slots {
+  margin: 4px 0 8px;
 }
 </style>

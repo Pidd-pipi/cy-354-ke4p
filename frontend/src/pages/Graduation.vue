@@ -8,15 +8,7 @@
       </el-col>
     </el-row>
     <el-empty v-if="!loading && products.length === 0" description="专场暂无商品" />
-    <el-dialog v-model="detailVisible" :title="current?.title" width="520px">
-      <el-descriptions :column="2" border v-if="current">
-        <el-descriptions-item label="分类">{{ categoryLabel(current.category) }}</el-descriptions-item>
-        <el-descriptions-item label="成色">{{ current.condition }}</el-descriptions-item>
-        <el-descriptions-item label="校区">{{ current.campus }}</el-descriptions-item>
-        <el-descriptions-item label="价格">¥{{ current.price.toFixed(2) }}</el-descriptions-item>
-        <el-descriptions-item label="描述" :span="2">{{ current.description }}</el-descriptions-item>
-      </el-descriptions>
-    </el-dialog>
+    <ProductDetailDialog v-model="detailVisible" :detail="detail" :booking="booking" @book="bookSlot" />
   </div>
 </template>
 
@@ -24,33 +16,49 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import ProductCard from '../components/common/ProductCard.vue'
-import { listGraduation } from '../api/product'
+import ProductDetailDialog from '../components/common/ProductDetailDialog.vue'
+import { getProduct, listGraduation } from '../api/product'
 import { createTradeOrder } from '../api/tradeOrder'
-import { categoryLabel } from '../constants/product'
-import type { Product } from '../types'
+import type { Product, ProductDetail } from '../types'
 import { useAuthStore } from '../stores/authStore'
 import { useRouter } from 'vue-router'
 
 const products = ref<Product[]>([])
 const loading = ref(false)
 const detailVisible = ref(false)
+const detail = ref<ProductDetail | null>(null)
+const booking = ref(false)
 const current = ref<Product | null>(null)
 const authStore = useAuthStore()
 const router = useRouter()
 
-function showDetail(p: Product) {
+async function showDetail(p: Product) {
   current.value = p
+  detail.value = null
   detailVisible.value = true
+  const res = await getProduct(p.id)
+  detail.value = res.data
 }
 
-async function buy(p: Product) {
+function buy(p: Product) {
   if (!authStore.token) {
     ElMessage.warning('请先登录')
     router.push('/login')
     return
   }
-  await createTradeOrder(p.id)
-  ElMessage.success('已下单')
+  showDetail(p)
+}
+
+async function bookSlot(slotStart?: string) {
+  if (!current.value) return
+  booking.value = true
+  try {
+    await createTradeOrder(current.value.id, slotStart)
+    ElMessage.success(slotStart ? '时段预约成功，等待卖家确认' : '已下单')
+    detailVisible.value = false
+  } finally {
+    booking.value = false
+  }
 }
 
 onMounted(async () => {

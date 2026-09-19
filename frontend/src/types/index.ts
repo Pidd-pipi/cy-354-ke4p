@@ -26,6 +26,23 @@ export interface Product {
   images: string
   status: string
   created_at: string
+  has_slots?: boolean
+  open_slot_count?: number
+}
+
+export interface ProductSlot {
+  id: number
+  start_at: string
+  status: string
+  available: boolean
+}
+
+export interface ProductDetail {
+  product: Product
+  slots: ProductSlot[]
+  total_slots: number
+  open_slots: number
+  bookable: boolean
 }
 
 export interface Conversation {
@@ -51,6 +68,7 @@ export interface TradeOrder {
   buyer_id: number
   seller_id: number
   status: string
+  slot_start_at: string | null
   buyer_confirmed_at: string | null
   seller_confirmed_at: string | null
   completed_at: string | null

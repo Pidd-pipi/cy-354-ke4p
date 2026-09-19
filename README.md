@@ -79,27 +79,28 @@ cy-354/
 │   └── internal/
 │       ├── config/          # 环境变量配置
 │       ├── constants/       # product.go, trade.go, user.go, error_codes.go, log_templates.go, messages.go
-│       ├── model/           # user, product, conversation, message, trade_order, review, book_exchange
+│       ├── model/           # user, product, product_slot, conversation, message, trade_order, review, book_exchange
 │       ├── repository/      # GORM 仓库（按实体分文件）
 │       ├── service/         # 业务逻辑（按实体分文件）
 │       ├── handler/         # HTTP 处理器（按实体分文件）
 │       ├── router/          # router.go + 按实体路由文件
 │       ├── middleware/      # auth, rbac, rate_limiter, error_handler, request_id
 │       ├── dto/             # 请求/响应结构体
-│       └── util/            # jwt, logger, formatters, app_error, credit_calculator, response
+│       └── util/            # jwt, logger, formatters, app_error, credit_calculator, response, slot
+│       └── test/integration/# 真实路由 + SQLite 的 HTTP 闭环与并发竞态测试
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf
     └── src/
         ├── api/             # user, product, conversation, tradeOrder, review, bookExchange
         ├── stores/          # authStore, userStore, productStore, tradeStore
-        ├── components/common/# ProductCard, ProductForm, MessageBubble, TradeStatusBadge, ExchangeCard
+        ├── components/common/# ProductCard, ProductForm, ProductDetailDialog, MessageBubble, TradeStatusBadge, ExchangeCard
         ├── hooks/           # useAuth, useProducts, useConversations
         ├── pages/           # Products, Publish, Messages, Orders, BookExchange, Graduation, Profile, Login, Register
         ├── router/          # index.ts + guards.ts
         ├── utils/           # request, dateFormat, priceFormatter
-        ├── constants/       # product, trade, user, errorCodes
-        └── types/           # 共享类型
+        ├── constants/       # product, slot, trade, user, errorCodes
+        └── types/           # 共享类型（含 ProductSlot / slot_start_at）
 ```
 
 ## 环境变量
@@ -135,6 +136,7 @@ cy-354/
 
 - 统一前缀 `/api/v1`，健康检查 `/healthz`。
 - 响应格式：`{ "code": 0, "message": "ok", "data": ... }`，错误码见 `backend/internal/constants/error_codes.go`。
+- 面交时段闭环：卖家发布商品时可在 `slot_starts` 中提供若干未来的整半小时时段；买家对含时段商品下单必须提交未过期且未被占用的 `slot_start`；待确认阶段任一方取消即释放时段，卖家确认收款后全部时段永久锁定。并发抢同一时段由数据库行锁 + 条件更新保证只有一个订单落库。
 - 核心接口：
   - `POST /api/v1/users/register`、`POST /api/v1/users/login`、`GET/PUT /api/v1/users/me`
   - `GET/POST /api/v1/products`、`GET/DELETE /api/v1/products/:id`、`GET /api/v1/products/graduation`
@@ -157,15 +159,15 @@ cy-354/
 | PUT | `/api/v1/users/me` | 更新昵称/头像/校区 | 登录 |
 | GET | `/api/v1/products` | 商品分页列表 | 无 |
 | GET | `/api/v1/products/graduation` | 毕业季专场列表 | 无 |
-| GET | `/api/v1/products/:id` | 商品详情 | 无 |
-| POST | `/api/v1/products` | 发布商品 | 登录 |
+| GET | `/api/v1/products/:id` | 商品详情（含 `slots`/`open_slots` 剩余面交时段） | 无 |
+| POST | `/api/v1/products` | 发布商品（可选 `slot_starts` 半小时面交时段数组） | 登录 |
 | DELETE | `/api/v1/products/:id` | 下架自己的商品 | 登录 |
 | POST | `/api/v1/conversations` | 发起/复用私信会话 | 登录 |
 | GET | `/api/v1/conversations/me` | 我的会话列表 | 登录 |
 | GET | `/api/v1/conversations/:id/messages` | 会话消息记录 | 登录 |
 | POST | `/api/v1/conversations/:id/messages` | 发送私信 | 登录 |
-| POST | `/api/v1/trade-orders` | 创建购买订单 | 登录 |
-| GET | `/api/v1/trade-orders/me` | 我的订单列表 | 登录 |
+| POST | `/api/v1/trade-orders` | 创建购买订单（含时段商品必带未占用的 `slot_start`） | 登录 |
+| GET | `/api/v1/trade-orders/me` | 我的订单列表（含 `slot_start_at` 预约时间） | 登录 |
 | POST | `/api/v1/trade-orders/:id/buyer-confirm` | 买家确认 | 登录 |
 | POST | `/api/v1/trade-orders/:id/seller-confirm` | 卖家确认（订单完成+商品售出） | 登录 |
 | POST | `/api/v1/trade-orders/:id/cancel` | 取消订单 | 登录 |
@@ -218,6 +220,29 @@ cy-354/
 - `backend/internal/constants/log_templates.go` 交易日志模板
 - `backend/internal/constants/error_codes.go` 状态冲突错误码
 
+### ProductSlotStatus（open/occupied/locked）
+
+前端 `frontend/src/constants/slot.ts`：
+
+- `PRODUCT_SLOT_STATUSES` 常量定义
+- `productSlotStatusLabel()` / `productSlotStatusType()` 映射
+- `src/components/common/ProductDetailDialog.vue` 时段单选与已过期/已占用/已锁定文案
+- `src/components/common/ProductCard.vue` 剩余时段标签
+- `src/pages/Orders.vue` 预约时间展示
+- `src/constants/errorCodes.ts` `SLOT_UNAVAILABLE=40901`
+
+后端 `backend/internal/constants/product.go`：
+
+- `ProductSlotStatusOpen/Occupied/Locked` 常量
+- `ProductSlotStatuses` 列表、`IsProductSlotStatus()`、`ProductSlotStatusText()`
+- `SlotMinutes/SlotMaxPerProduct/SlotMaxAdvanceDays` 半小时对齐与发布规则
+- `backend/internal/model/product_slot.go` Status 字段、`backend/internal/model/trade_order.go` SlotStartAt 字段
+- `backend/internal/repository/product_slot_repository.go` Occupy/Release/LockAllForProduct 条件更新
+- `backend/internal/service/trade_order_service.go` 预约/取消/完成状态机
+- `backend/internal/util/formatters.go` `ProductSlotStatusText()`、`backend/internal/util/slot.go` 时段校验
+- `backend/internal/constants/log_templates.go` 时段占用/释放/锁定日志模板
+- `backend/internal/constants/error_codes.go` `CodeSlotUnavailable`
+
 ### UserRole（student/admin）
 
 前端 `frontend/src/constants/user.ts`：
@@ -240,10 +265,20 @@ cy-354/
 - `backend/internal/util/formatters.go` `RoleText()`
 - `backend/internal/constants/log_templates.go` 登录日志带角色
 
+## 面交时段预约闭环
+
+- 卖家发布商品（`POST /api/v1/products`）时可选提交 `slot_starts`（RFC3339 时间数组，整半小时、未来 30 天内、单商品最多 30 个），写入 `product_slots` 表（`(product_id, start_at)` 唯一）。
+- 商品详情 `GET /api/v1/products/:id` 返回 `{ product, slots[], total_slots, open_slots, bookable }`，列表接口额外聚合 `has_slots` / `open_slot_count` 供卡片展示剩余时段。
+- 买家下单 `POST /api/v1/trade-orders`：含时段商品必须带 `slot_start`；事务内先 `SELECT ... FOR UPDATE` 锁定商品行与时段行，再条件更新 `open → occupied`（带 order_id），同时商品转 `reserved`。并发抢同一时段串行化，落败方收到 `40901 SLOT_UNAVAILABLE`，不会产生重复订单。
+- 待确认（`pending`）阶段买家或卖家取消订单：原子完成订单置 `cancelled`、时段 `occupied → open`、商品回到 `on_sale`，时段可被他人重新预约。
+- 买家确认收货后 `pending → confirmed`；卖家确认收款 `confirmed → completed`，商品转 `sold`，该商品全部时段置 `locked` 永久锁定。
+- 我的交易列表的每条订单带 `slot_start_at`，前端展示「面交预约时间」；刷新页面后状态以后端与数据库为准。
+- 未设置时段的商品保持原有直接下单流程，不受影响。
+
 ## 质量说明
 
-- 后端 `go build ./...` 与 `go test ./...` 通过（含 service/util 表驱动单测）。
-- 前端 `npm run build` 零错误。
+- 后端 `go build ./...`、`go vet ./...` 与 `go test ./...` 通过：含 service/util 表驱动单测，以及 `test/integration` 下基于真实 Gin 路由 + 内存 SQLite 的 HTTP 闭环测试（发布时段→预约→取消释放→重新预约→双方确认→永久锁定），并包含 20 买家并发抢同一时段仅 1 单成功的竞态测试（`-race -count=3`）。
+- 前端 `npm run build` 与 `tsc --noEmit` 零错误。
 - 分层依赖单向：handler → service → repository → model；构造器注入；`%w` 错误链 + 哨兵错误；统一响应 `{code,message,data}`。
 - 日志模板集中于 `internal/constants/log_templates.go`（≥25 条），全栈引用，字段变更需联动修改（屎山设计约束）。
 

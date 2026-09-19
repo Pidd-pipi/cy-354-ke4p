@@ -23,17 +23,7 @@
       </el-col>
     </el-row>
     <el-empty v-if="!loading && products.length === 0" description="暂无商品" />
-    <el-dialog v-model="detailVisible" :title="current?.title" width="520px">
-      <el-descriptions :column="2" border v-if="current">
-        <el-descriptions-item label="分类">{{ categoryLabel(current.category) }}</el-descriptions-item>
-        <el-descriptions-item label="成色">{{ current.condition }}</el-descriptions-item>
-        <el-descriptions-item label="校区">{{ current.campus }}</el-descriptions-item>
-        <el-descriptions-item label="交易地点">{{ current.trade_location }}</el-descriptions-item>
-        <el-descriptions-item label="价格">¥{{ current.price.toFixed(2) }}</el-descriptions-item>
-        <el-descriptions-item label="状态">{{ productStatusLabel(current.status) }}</el-descriptions-item>
-        <el-descriptions-item label="描述" :span="2">{{ current.description }}</el-descriptions-item>
-      </el-descriptions>
-    </el-dialog>
+    <ProductDetailDialog v-model="detailVisible" :detail="detail" :booking="booking" @book="bookSlot" />
   </div>
 </template>
 
@@ -41,42 +31,62 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import ProductCard from '../components/common/ProductCard.vue'
-import { PRODUCT_CATEGORIES, categoryLabel, productStatusLabel } from '../constants/product'
+import ProductDetailDialog from '../components/common/ProductDetailDialog.vue'
+import { PRODUCT_CATEGORIES } from '../constants/product'
 import { useProducts } from '../hooks/useProducts'
+import { getProduct } from '../api/product'
 import { createTradeOrder } from '../api/tradeOrder'
 import { createConversation } from '../api/conversation'
-import type { Product } from '../types'
+import type { Product, ProductDetail } from '../types'
 import { useAuthStore } from '../stores/authStore'
 import { useRouter } from 'vue-router'
 
 const { products, loading, load } = useProducts()
 const query = reactive<{ category?: string; campus?: string; keyword?: string }>({})
 const detailVisible = ref(false)
+const detail = ref<ProductDetail | null>(null)
+const booking = ref(false)
 const current = ref<Product | null>(null)
 const authStore = useAuthStore()
 const router = useRouter()
 
-function showDetail(p: Product) {
-  current.value = p
-  detailVisible.value = true
-}
-
-async function buy(p: Product) {
+function ensureLogin(): boolean {
   if (!authStore.token) {
     ElMessage.warning('请先登录')
     router.push('/login')
-    return
+    return false
   }
-  await createTradeOrder(p.id)
-  ElMessage.success('已下单，等待卖家确认')
+  return true
+}
+
+async function showDetail(p: Product) {
+  current.value = p
+  detail.value = null
+  detailVisible.value = true
+  const res = await getProduct(p.id)
+  detail.value = res.data
+}
+
+function buy(p: Product) {
+  if (!ensureLogin()) return
+  showDetail(p)
+}
+
+async function bookSlot(slotStart?: string) {
+  if (!current.value || !ensureLogin()) return
+  booking.value = true
+  try {
+    await createTradeOrder(current.value.id, slotStart)
+    ElMessage.success(slotStart ? '时段预约成功，等待卖家确认' : '已下单，等待卖家确认')
+    detailVisible.value = false
+    await load()
+  } finally {
+    booking.value = false
+  }
 }
 
 async function chat(p: Product) {
-  if (!authStore.token) {
-    ElMessage.warning('请先登录')
-    router.push('/login')
-    return
-  }
+  if (!ensureLogin()) return
   await createConversation(p.id)
   ElMessage.success('已发起私信')
   router.push('/messages')

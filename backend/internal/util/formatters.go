@@ -46,3 +46,8 @@ func CreditLevelText(score int) string {
 func CategoryText(c string) string {
 	return constants.ProductCategoryText(c)
 }
+
+// ProductSlotStatusText maps a meetup slot status to its Chinese label.
+func ProductSlotStatusText(s string) string {
+	return constants.ProductSlotStatusText(s)
+}

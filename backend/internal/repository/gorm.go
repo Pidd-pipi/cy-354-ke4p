@@ -7,7 +7,12 @@ import (
 
 	"github.com/lp/campus-market/internal/util"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+// ClauseLockingUpdate appends SELECT ... FOR UPDATE for pessimistic row
+// locking inside a transaction.
+var ClauseLockingUpdate = clause.Locking{Strength: "UPDATE"}
 
 // txKey is the context key under which an in-flight transaction lives.
 type txKey struct{}

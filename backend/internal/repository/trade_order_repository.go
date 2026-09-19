@@ -77,6 +77,22 @@ func (r *TradeOrderRepository) UpdateStatus(ctx context.Context, id uint, status
 	return nil
 }
 
+// UpdateStatusFromPending transitions a pending order to a new status. It
+// returns util.ErrConflict when the order has already moved on, preventing
+// double cancellation of the same order.
+func (r *TradeOrderRepository) UpdateStatusFromPending(ctx context.Context, id uint, status string) error {
+	res := db(ctx, r.db).Model(&model.TradeOrder{}).
+		Where("id = ? AND status = ?", id, "pending").
+		Update("status", status)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return util.ErrConflict
+	}
+	return nil
+}
+
 // UpdateBuyerConfirmed sets the buyer confirmation timestamp and status.
 func (r *TradeOrderRepository) UpdateBuyerConfirmed(ctx context.Context, id uint, ts interface{}) error {
 	res := db(ctx, r.db).Model(&model.TradeOrder{}).Where("id = ? AND status = ?", id, "pending").

@@ -32,10 +32,25 @@ async function submit() {
     ElMessage.warning('请填写完整信息')
     return
   }
+  const { slots, incomplete } = formRef.value?.collectSlotStarts() ?? { slots: [], incomplete: false }
+  if (incomplete) {
+    ElMessage.warning('面交时段需选择未来的日期与整半小时时间，请检查后移除无效时段')
+    return
+  }
   submitting.value = true
   try {
-    await createProduct({ ...form })
-    ElMessage.success('发布成功')
+    await createProduct({
+      title: form.title,
+      description: form.description,
+      price: form.price,
+      category: form.category,
+      condition: form.condition,
+      campus: form.campus,
+      trade_location: form.trade_location,
+      images: form.images,
+      slot_starts: slots,
+    })
+    ElMessage.success(slots.length > 0 ? `发布成功，已开放 ${slots.length} 个面交时段` : '发布成功')
     router.push('/products')
   } finally {
     submitting.value = false

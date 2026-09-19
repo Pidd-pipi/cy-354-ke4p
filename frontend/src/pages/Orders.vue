@@ -9,6 +9,9 @@
           <p class="order-meta">
             买家 #{{ o.buyer_id }} / 卖家 #{{ o.seller_id }} · {{ formatDateTime(o.created_at) }}
           </p>
+          <p v-if="o.slot_start_at" class="order-slot">
+            面交预约时间：<strong>{{ formatSlotRange(o.slot_start_at) }}</strong>
+          </p>
         </div>
         <div class="order-actions">
           <el-button v-if="o.status === 'pending' && o.buyer_id === authStore.user?.id" size="small" type="primary" @click="buyerConfirm(o.id)">确认收货</el-button>
@@ -40,14 +43,14 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import TradeStatusBadge from '../components/common/TradeStatusBadge.vue'
 import { useTradeStore } from '../stores/tradeStore'
 import { useAuthStore } from '../stores/authStore'
 import { buyerConfirm, sellerConfirm, cancelTradeOrder } from '../api/tradeOrder'
 import { createReview } from '../api/review'
 import { REVIEW_RATINGS } from '../constants/trade'
-import { formatDateTime } from '../utils/dateFormat'
+import { formatDateTime, formatSlotRange } from '../utils/dateFormat'
 import type { TradeOrder } from '../types'
 
 const { orders, fetch } = useTradeStore()
@@ -55,21 +58,28 @@ const authStore = useAuthStore()
 const reviewVisible = ref(false)
 const reviewForm = reactive({ trade_id: 0, rating: 'good', content: '' })
 
-async function buyerConfirmFn(id: number) {
+async function buyerConfirm(id: number) {
   await buyerConfirm(id)
   ElMessage.success('已确认收货')
   await fetch()
 }
 
-async function sellerConfirmFn(id: number) {
+async function sellerConfirm(id: number) {
   await sellerConfirm(id)
-  ElMessage.success('交易完成')
+  ElMessage.success('交易完成，面交时段已锁定')
   await fetch()
 }
 
-async function cancelFn(id: number) {
+async function cancel(id: number) {
+  try {
+    await ElMessageBox.confirm('取消后面交时段将被释放，其他买家可重新预约。确认取消该订单？', '取消订单', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
   await cancelTradeOrder(id)
-  ElMessage.success('已取消')
+  ElMessage.success('已取消，面交时段已释放')
   await fetch()
 }
 
@@ -106,6 +116,11 @@ onMounted(fetch)
 .order-meta {
   color: #909399;
   font-size: 12px;
+  margin: 6px 0 0;
+}
+.order-slot {
+  color: #409eff;
+  font-size: 13px;
   margin: 6px 0 0;
 }
 </style>

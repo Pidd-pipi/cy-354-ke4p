@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/lp/campus-market/internal/model"
 	"github.com/lp/campus-market/internal/util"
@@ -33,6 +34,17 @@ func (r *ProductRepository) FindByID(ctx context.Context, id uint) (*model.Produ
 	return &p, nil
 }
 
+// FindByIDForUpdate returns a product with a row lock; use inside a
+// transaction to serialize concurrent booking attempts.
+func (r *ProductRepository) FindByIDForUpdate(ctx context.Context, id uint) (*model.Product, error) {
+	var p model.Product
+	err := db(ctx, r.db).Clauses(ClauseLockingUpdate).First(&p, id).Error
+	if err != nil {
+		return nil, normalizeError(err)
+	}
+	return &p, nil
+}
+
 // List filters products by category/campus/keyword/status with pagination.
 func (r *ProductRepository) List(ctx context.Context, category, campus, keyword, status string, page, pageSize int) ([]model.Product, int64, error) {
 	q := db(ctx, r.db).Model(&model.Product{})
@@ -57,7 +69,49 @@ func (r *ProductRepository) List(ctx context.Context, category, campus, keyword,
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := r.hydrateSlotCounts(ctx, items); err != nil {
+		return nil, 0, err
+	}
 	return items, total, nil
+}
+
+// slotCountRow holds grouped slot counts for a product.
+type slotCountRow struct {
+	ProductID uint
+	Total     int64
+	Open      int64
+}
+
+func (r *ProductRepository) hydrateSlotCounts(ctx context.Context, items []model.Product) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(items))
+	for _, p := range items {
+		ids = append(ids, p.ID)
+	}
+	var rows []slotCountRow
+	err := db(ctx, r.db).Model(&model.ProductSlot{}).
+		Select("product_id AS product_id, COUNT(*) AS total, "+
+			"SUM(CASE WHEN status = ? AND start_at > ? THEN 1 ELSE 0 END) AS open",
+			"open", time.Now()).
+		Where("product_id IN ?", ids).
+		Group("product_id").
+		Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+	counts := make(map[uint]slotCountRow, len(rows))
+	for _, row := range rows {
+		counts[row.ProductID] = row
+	}
+	for i := range items {
+		if c, ok := counts[items[i].ID]; ok {
+			items[i].HasSlots = c.Total > 0
+			items[i].OpenSlotCount = int(c.Open)
+		}
+	}
+	return nil
 }
 
 // UpdateStatus sets the product status.

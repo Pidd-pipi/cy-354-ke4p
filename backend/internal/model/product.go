@@ -16,4 +16,10 @@ type Product struct {
 	Images        string    `gorm:"type:text" json:"images"`
 	Status        string    `gorm:"size:16;index;not null;default:on_sale" json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
+
+	// HasSlots reports whether the seller offered meetup slots; OpenSlotCount
+	// counts currently bookable (non-expired, open) slots. Both fields are
+	// populated by the repository list queries and ignored on writes.
+	HasSlots      bool `gorm:"-:all" json:"has_slots"`
+	OpenSlotCount int  `gorm:"-:all" json:"open_slot_count"`
 }
